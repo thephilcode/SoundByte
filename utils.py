@@ -14,6 +14,18 @@ resume_event   = threading.Event()
 retry_event    = threading.Event()
 shutdown_event = threading.Event()
 
+
+def cleanup_old_logs(log_dir: Path, days_to_keep: int = 30) -> None:
+    """Delete log files older than days_to_keep days."""
+    now = time.time()
+    cutoff = now - (days_to_keep * 86400)
+    for log_file in log_dir.glob("soundbyte_*.log"):
+        if log_file.stat().st_mtime < cutoff:
+            try:
+                log_file.unlink()
+            except OSError:
+                pass  # Ignore errors
+
 class AppState:
     def __init__(self):
         self.is_online: bool = False
@@ -122,6 +134,7 @@ def setup_logging(log_dir: Path, level: int = logging.INFO) -> logging.Logger:
         Configured logger instance.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_old_logs(log_dir)
     log_file = log_dir / f"soundbyte_{time.strftime("%Y_%m_%d")}.log"
 
     root_logger = logging.getLogger()
