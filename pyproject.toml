@@ -1,0 +1,18 @@
+[project]
+name = "soundbyte"
+version = "0.1.0"
+description = "A minimal Windows tray app for recognising music that's being played by a rendering endpoint device. Basically, Shazam for Windows."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "keyboard>=0.13.5",
+    "logging>=0.4.9.6",
+    "notify-py>=0.3.43",
+    "pillow>=12.3.0",
+    "pyaudiowpatch>=0.2.12.8",
+    "pyinstaller>=6.21.0",
+    "pynput>=1.8.2",
+    "pystray>=0.19.5",
+    "python-dotenv>=1.2.2",
+    "requests>=2.34.2",
+]

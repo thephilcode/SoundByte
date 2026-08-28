@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# PyInstaller generated files and directories
+build/
+dist/
+*.spec
+
+# env files
+.env*
+!.env.example
+
+# Virtual environments
+.venv/
+
+# VS Code settings
+.vscode/
+.kilo/
