@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "keyboard>=0.13.5",
-    "logging>=0.4.9.6",
     "notify-py>=0.3.43",
     "pillow>=12.3.0",
     "pyaudiowpatch>=0.2.12.8",
@@ -16,3 +15,9 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
 ]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

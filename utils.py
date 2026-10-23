@@ -14,6 +14,25 @@ resume_event   = threading.Event()
 retry_event    = threading.Event()
 shutdown_event = threading.Event()
 
+DEFAULT_RECORDING_DURATION = 10.0
+DEFAULT_HOTKEY = 'windows+shift+z'
+
+
+def is_valid_hotkey(hotkey: str) -> bool:
+    """Check whether the keyboard library can register this hotkey.
+
+    Returns True when validation is not possible on this platform (the keyboard
+    library needs root on Linux), so it only ever rejects hotkeys known to be bad.
+    """
+    import keyboard
+    try:
+        keyboard.parse_hotkey(hotkey)
+        return True
+    except ValueError:
+        return False
+    except ImportError:
+        return True
+
 
 def cleanup_old_logs(log_dir: Path, days_to_keep: int = 30) -> None:
     """Delete log files older than days_to_keep days."""
@@ -31,22 +50,17 @@ class AppState:
         self.is_online: bool = False
         self.is_recording: bool = False
         self.pending_files: int = 0
-        
+        self.NOTIFICATIONS_ENABLED: bool = True  # Will be overridden by load_config if present
+
 app_state = AppState()
 
         
 class FileManager:
-    def __init__(self, log_dir: Path, queue_dir: Path, processing_dir: Path, completed_dir: Path, failed_dir: Path):
+    def __init__(self, log_dir: Path, queue_dir: Path, completed_dir: Path, failed_dir: Path):
         self.log_dir = log_dir
         self.queue_dir = queue_dir
-        self.processing_dir = processing_dir
         self.completed_dir = completed_dir
         self.failed_dir = failed_dir
-    
-    def move_to_processing(self, filename: Path):
-        """Move a file from queue to processing directory"""
-        dst = self.processing_dir / filename.name
-        filename.rename(dst)
     
     def move_to_completed(self, filename: Path) :
         """Move a file from processing to completed directory"""
@@ -84,25 +98,23 @@ def _get_app_base_dir() -> Path:
 
 def get_data_dirs():
     """Get data directories for the app, creating them if they don't exist.
-    
+
     Returns:
         log_dir: _Directory where the log file will be saved_
         queue_dir: _Directory where audio files will be saved while pending processing_
-        processing_dir: _Directory where audio files will be moved while being processed_
         completed_dir: _Directory where audio files will be moved after processing_
         failed_dir: _Directory where audio files will be moved after failure to process them_
     """
     home_dir = _get_app_base_dir()
     log_dir: Path = Path(home_dir) / 'logs'
     queue_dir: Path = Path(home_dir) / 'pending'
-    processing_dir: Path = Path(home_dir) / 'processing'
     completed_dir: Path = Path(home_dir) / 'completed'
     failed_dir: Path = Path(home_dir) / 'failed'
-    dirs = (log_dir, queue_dir, processing_dir, completed_dir, failed_dir)
+    dirs = (log_dir, queue_dir, completed_dir, failed_dir)
     # Create directories if they don't exist
     for dir in dirs:
         os.makedirs(dir, exist_ok=True)
-    
+
     return dirs
 
 
@@ -110,7 +122,7 @@ def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
         # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
+        base_path = sys._MEIPASS # type: ignore[reportAttributeAccessError]
     except Exception:
         base_path = os.path.abspath(".")
 
@@ -189,10 +201,35 @@ def load_history() -> List[Dict]:
         return []
 
 def save_history_entry(entry: Dict) -> None:
-    """Append a single entry to the history file in a thread-safe manner."""
+    """Append a single entry to the history file in a thread-safe manner,
+    moving duplicates to the end (most recent position) based on title, artist, and album."""
     with _history_lock:
         history = load_history()
-        history.append(entry)
+
+        # Extract key fields for duplicate detection (case-insensitive, whitespace trimmed)
+        new_title = str(entry.get('title', '')).strip().lower()
+        new_artist = str(entry.get('artist', '')).strip().lower()
+        new_album = str(entry.get('album', '')).strip().lower()
+
+        # Skip if essential fields are empty (avoid considering empty entries as duplicates of each other)
+        if not new_title and not new_artist:
+            history.append(entry)
+        else:
+            # Remove any existing entries that match our new entry
+            # This effectively moves duplicates to the end (most recent position)
+            history = [
+                existing for existing in history
+                if not (
+                    str(existing.get('title', '')).strip().lower() == new_title and
+                    str(existing.get('artist', '')).strip().lower() == new_artist and
+                    str(existing.get('album', '')).strip().lower() == new_album
+                )
+            ]
+
+            # Append the new entry as the most recent
+            history.append(entry)
+
+        # Save the updated history
         with open_history_file('w') as f:
             json.dump(history, f, indent=2)
 

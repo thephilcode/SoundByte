@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import subprocess
+from typing import Any, Callable
 from pystray import Icon, MenuItem, Menu
 from PIL import Image
 from utils import app_state, FileManager, get_icon, new_file_event, paused_event, resume_event, retry_event, shutdown_event
@@ -12,14 +13,17 @@ try:
     from settings import show_settings
 except ImportError:
     # Fallback if settings module is not available (should not happen in normal operation)
-    def show_settings(parent=None, on_save_callback=None):
+    def show_settings(
+        parent: Any = None,
+        on_save_callback: Callable[..., Any] | None = None,
+    ) -> None:
         pass
 
 try:
     from history import show_history
 except ImportError:
     # Fallback if history module is not available
-    def show_history(parent=None):
+    def show_history(parent: Any = None) -> None:
         pass
 
 logger = logging.getLogger(__name__)
@@ -48,13 +52,14 @@ def pause_on_clicked(icon, item: MenuItem):
     icon.update_menu()
 
 def retry_on_clicked(icon, item: MenuItem):
-    """ Set new file event to trigger sync worker loop 
-    
+    """ Set new file event to trigger sync worker loop immediately for retry
+
     Args:
         icon: The Icon instance for this tray app
         item: The Menuitem that was clicked
     """
-    retry_event.set()
+    logger.info("Retry Now clicked - triggering immediate connection retry")
+    new_file_event.set()
 
 def open_folder_on_clicked(file_manager: FileManager, icon, item: MenuItem):
     """ Open folder when triggered 
@@ -78,8 +83,8 @@ def open_folder_on_clicked(file_manager: FileManager, icon, item: MenuItem):
         subprocess.call([opener, path])
 
 def on_quit(icon, item: MenuItem):
-    """ Callback function to quit the app 
-    
+    """ Callback function to quit the app
+
     Args:
         icon: The Icon instance for this tray app
         item: The Menuitem that was clicked
@@ -88,13 +93,18 @@ def on_quit(icon, item: MenuItem):
     new_file_event.set()
     logger.info("Quitting app")
     icon.stop()
+    # Stop the Tk mainloop too, otherwise the process lingers with no tray icon.
+    root = getattr(icon, "root", None)
+    if root is not None:
+        root.after(0, root.quit)
 
-def run_tray_app(file_manager: FileManager, update_hotkey_callback=None):
+def run_tray_app(file_manager: FileManager, update_hotkey_callback=None, root=None):
     """ Main function to setup and run the tray app 
     
     Args:
         file_manager: FileManager instance for getting directory paths
-        update_hotkey: Optional function to call when the hotkey is changed via settings
+        update_hotkey_callback: Optional function to call when the hotkey is changed via settings
+        root: The Tkinter root window (used to schedule dialogs in the main thread)
     """
     logger.info("Configuring tray menu and icon")
     
@@ -104,12 +114,27 @@ def run_tray_app(file_manager: FileManager, update_hotkey_callback=None):
             # If the hotkey changed and we have an update_hotkey function, call it
             if 'HOTKEY' in new_config and update_hotkey_callback is not None:
                 update_hotkey_callback(new_config['HOTKEY'])
-        # Show the settings dialog
-        show_settings(parent=None, on_save_callback=on_settings_save)
+        # Show the settings dialog in the main thread
+        try:
+            if root:
+                root.after(0, lambda: show_settings(parent=root, on_save_callback=on_settings_save, wait=False))
+            else:
+                show_settings(parent=None, on_save_callback=on_settings_save, wait=False)
+        except Exception as e:
+            logger.error(f"Failed to show settings dialog: {e}", exc_info=True)
     
     # Define the history menu item callback
     def history_on_clicked(icon, item):
-        show_history(parent=None)
+        def on_history_save():
+            pass  # Placeholder for consistency with settings callback signature
+        # Show the history dialog in the main thread
+        try:
+            if root:
+                root.after(0, lambda: show_history(parent=root, wait=False))
+            else:
+                show_history(parent=None, wait=False)
+        except Exception as e:
+            logger.error(f"Failed to show history dialog: {e}", exc_info=True)
     
     menu = Menu(
         MenuItem(lambda item: f"{'○ Offline' if not app_state.is_online else '● Online'} - {app_state.pending_files} pending files", None),
@@ -131,4 +156,5 @@ def run_tray_app(file_manager: FileManager, update_hotkey_callback=None):
         title="SoundByte",
         menu=menu
     )
+    setattr(icon, "root", root)
     icon.run()

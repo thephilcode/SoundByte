@@ -25,6 +25,46 @@ class Backoff:
         self.current = self.initial
 
 
+def _file_age(file: Path) -> float:
+    """Seconds since the file was created.
+
+    st_birthtime is only available on Windows; fall back to the modification
+    time, which is the same for the recordings this app creates.
+    """
+    stat = file.stat()
+    created = getattr(stat, 'st_birthtime', stat.st_mtime)
+    return time.time() - created
+
+
+def cleanup_old_files(file_manager: FileManager, max_age_seconds: int = 864000) -> None:
+    """Delete processed recordings older than max_age_seconds.
+
+    Also cleans up orphaned .wav.tmp files that may be left behind if recording
+    is interrupted.
+
+    A file that cannot be removed (locked by Explorer or antivirus) is logged
+    and skipped: raising here would take the worker thread down.
+    """
+    # Clean up completed and failed directories
+    for directory in (file_manager.completed_dir, file_manager.failed_dir):
+        for file in directory.iterdir():
+            if _file_age(file) > max_age_seconds:
+                logger.info(f"Deleting old file: {file}")
+                try:
+                    os.remove(file)
+                except OSError as e:
+                    logger.warning(f"Could not delete old file {file}: {e}")
+
+    # Clean up orphaned .wav.tmp files in queue directory
+    for tmp_file in file_manager.queue_dir.glob('*.wav.tmp'):
+        if _file_age(tmp_file) > max_age_seconds:
+            logger.info(f"Deleting orphaned temp file: {tmp_file}")
+            try:
+                os.remove(tmp_file)
+            except OSError as e:
+                logger.warning(f"Could not delete orphaned temp file {tmp_file}: {e}")
+
+
 def sync_worker(file_manager: FileManager, send_to_recognition, is_online, event: Event = new_file_event):
     """A state-driven worker that sits in the background and processes audio files one by one."""
 
@@ -55,17 +95,7 @@ def sync_worker(file_manager: FileManager, send_to_recognition, is_online, event
             
             current_time = time.time()
             if current_time - last_cleanup_time > CLEANUP_INTERVAL:
-                completed_files = list(file_manager.completed_dir.iterdir())
-                failed_files = list(file_manager.failed_dir.iterdir())
-                file_list = (completed_files, failed_files)
-                
-                for _ in file_list:
-                    for file in _:
-                        age = file.stat().st_birthtime
-                        diff = current_time - age
-                        if diff > 864000:
-                            logger.info(f"Deleting old file: {file}")
-                            os.remove(file)
+                cleanup_old_files(file_manager)
                 last_cleanup_time = current_time
             
             if not pending_files:
@@ -84,21 +114,28 @@ def sync_worker(file_manager: FileManager, send_to_recognition, is_online, event
                     retry_event.clear()
                     logger.info("Retry signal received: Retrying connection...")
                     backoff.current = backoff.initial
-                if not app_state.is_online:
-                    app_state.is_online = False
-                shutdown_event.wait(timeout=backoff.current)
-                if shutdown_event.is_set():
-                    logger.info("Shutdown signal received. Ending loop")
-                    sys.exit(0)
-                backoff.current = (min(backoff.current * 2, backoff.maximum))
-                if count==0:
-                    notification = Notify()
-                    notification.application_name = "SoundByte"
-                    notification.title = "App Offline"
-                    notification.message = "Your recording is saved for recognition when you go back online.\nWe'll notify you of the results"
-                    notification.send(block=False)
-                    count+=1
-                logger.info(f"App is offline. Retrying connection in {backoff.current} seconds")
+                # Check actual online status and update app_state if changed
+                currently_online = is_online()
+                if currently_online != app_state.is_online:
+                    app_state.is_online = currently_online
+                    if app_state.is_online:
+                        # Just went online
+                        backoff.reset()
+                        logger.info("App is now online")
+                    else:
+                        # Just went offline
+                        if count == 0 and app_state.NOTIFICATIONS_ENABLED:
+                            notification = Notify()
+                            notification.application_name = "SoundByte"
+                            notification.title = "App Offline"
+                            notification.message = "Your recording is saved for recognition when you go back online.\nWe'll notify you of the results"
+                            notification.icon = get_logo()
+                            notification.send(block=False)
+                            count += 1
+                        logger.info(f"App is now offline. Retrying connection in {backoff.current} seconds")
+                elif not app_state.is_online:
+                    # Still offline, continue with backoff
+                    logger.info(f"App is offline. Retrying connection in {backoff.current} seconds")
             
             if shutdown_event.is_set():
                 continue
@@ -116,30 +153,50 @@ def sync_worker(file_manager: FileManager, send_to_recognition, is_online, event
                             results = send_to_recognition(file)
                             count += 1
                         else:
-                            file_manager.move_to_failed(file)
-                            notification = Notify()
-                            notification.title = "Song Not Recognised"
-                            notification.message = "The song was not recognised"
-                            notification.icon = get_logo()
-                            notification.send(block=False)
                             break
 
-                    if results and results[0] is True:
+                    response = results[1] if results and isinstance(results[1], dict) else {}
+                    match_fields = (
+                        "title",
+                        "artist",
+                        "album",
+                        "release_date",
+                        "label",
+                        "song_link",
+                    )
+                    has_match = any(
+                        response.get(field) is not None
+                        and str(response.get(field)).strip().lower() not in ("", "unknown")
+                        for field in match_fields
+                    )
+
+                    if results and results[0] is True and has_match:
                          file_manager.move_to_completed(file)
+                         app_state.pending_files -= 1
                          notification = Notify()
+                         notification.application_name = "SoundByte"
                          notification.title = "Song Match Found!"
-                         notification.message = f"Title: {str(results[1]['title'])}\nArtist: {str(results[1]['artist'])}"
+                         notification.message = f"Title: {str(response.get('title', 'Unknown'))}\nArtist: {str(response.get('artist', 'Unknown'))}"
                          notification.icon = get_logo()
                          notification.send(block=False)
                          # Save to history
                          entry = {
                              "timestamp": datetime.now().isoformat(),
-                             "title": str(results[1].get('title', '')),
-                             "artist": str(results[1].get('artist', '')),
-                             "album": str(results[1].get('album', '')),
-                             "song_link": str(results[1].get('song_link', ''))
+                             "title": str(response.get('title', '')),
+                             "artist": str(response.get('artist', '')),
+                             "album": str(response.get('album', '')),
+                             "song_link": str(response.get('song_link', ''))
                          }
                          save_history_entry(entry)
+                    else:
+                        file_manager.move_to_failed(file)
+                        app_state.pending_files -= 1
+                        notification = Notify()
+                        notification.application_name = "SoundByte"
+                        notification.title = "Song Not Recognised"
+                        notification.message = "The song was not recognised"
+                        notification.icon = get_logo()
+                        notification.send(block=False)
                 # End of for file in pending_files loop
             # End of elif is_online() block
         # End of while not paused_event.is_set() loop

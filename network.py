@@ -4,9 +4,6 @@ from pathlib import Path
 import requests
 import socket
 
-personal_token = dotenv.get_key('.env', 'AUDD_API_TOKEN') or ''
-API_URL='https://api.audd.io/'
-API_TOKENS=[t for t in ['test', personal_token] if t]
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +40,25 @@ def send_to_api(filename: Path):
     - status: True if API request was successful, False otherwise
     - result: Result text or API error message if the request failed
     """
+    # Read personal token from .env and clean it
+    personal_token = dotenv.get_key('.env', 'AUDD_API_TOKEN') or ''
+    # Remove any surrounding whitespace and quotes that might interfere
+    personal_token = personal_token.strip()
+    if personal_token.startswith('"') and personal_token.endswith('"') and len(personal_token) >= 2:
+        personal_token = personal_token[1:-1]
+    elif personal_token.startswith("'") and personal_token.endswith("'") and len(personal_token) >= 2:
+        personal_token = personal_token[1:-1]
+    
+    # Log token status for debugging (without exposing the token)
+    if personal_token:
+        logger.debug(f"Personal token loaded: length={len(personal_token)}, "
+                    f"starts_with={personal_token[:3] if len(personal_token) >= 3 else personal_token}, "
+                    f"ends_with={personal_token[-3:] if len(personal_token) >= 3 else personal_token}")
+    else:
+        logger.debug("No personal token found in .env")
+    
+    API_TOKENS = [t for t in ['test', personal_token] if t]
+    API_URL='https://api.audd.io/'
     payload={
         'return': 'apple_music,spotify',
         'api_token': ''
@@ -62,29 +78,52 @@ def send_to_api(filename: Path):
                     timeout=HTTP_TIMEOUT
                 )
                 response.raise_for_status()  # Raise an http error for bad responses
-              
+               
             data = response.json()
 
             if data.get('status') == 'error':
                 error_msg = data.get('error', {}).get('error_message', 'Unknown error message')
-                error_code = data.get('error_code', 'Unknown error code')
+                error_code = data.get('error', {}).get('error_code', 'Unknown error code')
                 if error_code == 901:
                     logger.error("Test API token limit reached. Switching to personal API token.")
                     continue
-                logger.error(f"\nAPI Error: {error_msg} (Code: {error_code})")
+                elif error_code == 900:
+                    logger.error("Personal API token appears to be invalid or inactive. Checking next token if available.")
+                    continue
+                logger.error(f"API Error: {error_msg} (Code: {error_code})")
                 return (False, error_msg)
-            
+             
             elif data.get('status') == 'success':
-                song_info= data.get('result', {})
-                logger.info("\n---Song recognised successfully!---")
-                logger.info(f"Title: {str(song_info.get('title', 'Unknown'))}")
-                logger.info(f"Artist: {str(song_info.get('artist', 'Unknown'))}")
-                logger.info(f"Album: {str(song_info.get('album', 'Unknown'))}")
-                logger.info(f"Release Date: {str(song_info.get('release_date', 'Unknown'))}")
-                logger.info(f"Label: {str(song_info.get('label', 'Unknown'))}")
-                logger.info(f"Song Link: {str(song_info.get('song_link', 'Unknown'))}")
+                song_info = data.get('result') or {}
+                if not isinstance(song_info, dict):
+                    song_info = {}
+                match_fields = (
+                    'title',
+                    'artist',
+                    'album',
+                    'release_date',
+                    'label',
+                    'song_link',
+                )
+                has_match = any(
+                    song_info.get(field) is not None
+                    and str(song_info.get(field)).strip().lower() not in ('', 'unknown')
+                    for field in match_fields
+                )
+
+                if has_match:
+                    logger.info("---Song recognised successfully!---")
+                    logger.info(f"Title: {str(song_info.get('title', 'Unknown'))}")
+                    logger.info(f"Artist: {str(song_info.get('artist', 'Unknown'))}")
+                    logger.info(f"Album: {str(song_info.get('album', 'Unknown'))}")
+                    logger.info(f"Release Date: {str(song_info.get('release_date', 'Unknown'))}")
+                    logger.info(f"Label: {str(song_info.get('label', 'Unknown'))}")
+                    logger.info(f"Song Link: {str(song_info.get('song_link', 'Unknown'))}")
+                else:
+                    logger.info("No song match found.")
+
                 return (True, song_info)
-        
+         
         except requests.exceptions.HTTPError:
             if response:
                 logger.error(f"HTTP error occurred: {response.status_code} - {response.text}", exc_info=True)

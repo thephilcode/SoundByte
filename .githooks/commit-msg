@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Simple Conventional Commits validator
+# Expected format: <type>(<scope>): <subject> OR <type>: <subject>
+# Types: feat, fix, chore, refactor, perf, test, build, ci, docs, style
+
+COMMIT_MSG_FILE=$1
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Regex for Conventional Commits
+PATTERN="^(feat|fix|chore|refactor|perf|test|build|ci|docs|style)(\([a-z0-9_-]*\))?: .+"
+
+if [[ ! $COMMIT_MSG =~ $PATTERN ]]; then
+    echo "ERROR: Invalid commit message format."
+    echo "Your message: $COMMIT_MSG"
+    echo ""
+    echo "Expected format: <type>: <subject>"
+    echo "Example: fix: resolve unresponsive settings window"
+    echo ""
+    echo "Allowed types: feat, fix, chore, refactor, perf, test, build, ci, docs, style"
+    exit 1
+fi
