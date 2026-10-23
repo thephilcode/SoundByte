@@ -135,10 +135,21 @@ def run_tray_app(file_manager: FileManager, update_hotkey_callback=None, root=No
                 show_history(parent=None, wait=False)
         except Exception as e:
             logger.error(f"Failed to show history dialog: {e}", exc_info=True)
-    
+
+    def manual_record_on_clicked(icon, item):
+        from recording import record_audio
+        # We need the file_manager and new_file_event
+        # Since we are in run_tray_app, we have file_manager
+        # and new_file_event is imported from utils
+        from utils import new_file_event
+        logger.info("Manual record clicked")
+        # Recording duration is now in app_state
+        record_audio(app_state.recording_duration, file_manager, new_file_event)
+
     menu = Menu(
         MenuItem(lambda item: f"{'○ Offline' if not app_state.is_online else '● Online'} - {app_state.pending_files} pending files", None),
         Menu.SEPARATOR,
+        MenuItem("Manual Record", manual_record_on_clicked),
         MenuItem("Retry Now", retry_on_clicked),
         MenuItem("Pause syncing", pause_on_clicked, checked=lambda item: paused_event.is_set()),
         Menu.SEPARATOR,

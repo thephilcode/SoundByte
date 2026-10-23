@@ -50,6 +50,7 @@ class AppState:
         self.is_online: bool = False
         self.is_recording: bool = False
         self.pending_files: int = 0
+        self.recording_duration: float = DEFAULT_RECORDING_DURATION
         self.NOTIFICATIONS_ENABLED: bool = True  # Will be overridden by load_config if present
 
 app_state = AppState()

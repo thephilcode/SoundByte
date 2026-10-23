@@ -25,6 +25,8 @@ def main():
     except (TypeError, ValueError):
         logger.warning(f"Invalid RECORDING_DURATION in .env ({dur!r}); using {DEFAULT_RECORDING_DURATION}")
         RECORDING_DURATION = DEFAULT_RECORDING_DURATION
+
+    app_state.recording_duration = RECORDING_DURATION
     HOTKEY = dotenv.get_key('.env', 'HOTKEY') or DEFAULT_HOTKEY
     if is_online(): 
         app_state.is_online = True
