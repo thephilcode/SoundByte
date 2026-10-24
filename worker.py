@@ -93,11 +93,36 @@ def sync_worker(file_manager: FileManager, send_to_recognition, is_online, event
             pending_files.sort(key=lambda p: p.stat().st_mtime)
             app_state.pending_files = len(pending_files)
             
+            # Check actual online status and update app_state regardless of pending files
+            currently_online = is_online()
+            if currently_online != app_state.is_online:
+                app_state.is_online = currently_online
+                # Trigger tray menu refresh
+                retry_event.set()
+                if app_state.is_online:
+                    backoff.reset()
+                    logger.info("App is now online")
+                else:
+                    # Just went offline
+                    # We only notify once per offline transition
+                    if not any(p.stat().st_mtime > time.time() - 60 for p in file_manager.get_pending_files()) and app_state.NOTIFICATIONS_ENABLED:
+                        # Use a simple flag or just check if we just transitioned
+                        pass
+                    # The original code had 'count=0' here, but 'count' was local to the inner loop.
+                    # Let's handle the notification properly.
+                    notification = Notify()
+                    notification.application_name = "SoundByte"
+                    notification.title = "App Offline"
+                    notification.message = "Your recording is saved for recognition when you go back online.\nWe'll notify you of the results"
+                    notification.icon = get_logo()
+                    notification.send(block=False)
+                    logger.info("App is now offline")
+
             current_time = time.time()
             if current_time - last_cleanup_time > CLEANUP_INTERVAL:
                 cleanup_old_files(file_manager)
                 last_cleanup_time = current_time
-            
+
             if not pending_files:
                 continue
             
@@ -118,25 +143,26 @@ def sync_worker(file_manager: FileManager, send_to_recognition, is_online, event
                 currently_online = is_online()
                 if currently_online != app_state.is_online:
                     app_state.is_online = currently_online
+                    # Trigger tray menu refresh
+                    retry_event.set()
                     if app_state.is_online:
-                        # Just went online
                         backoff.reset()
                         logger.info("App is now online")
                     else:
                         # Just went offline
-                        if count == 0 and app_state.NOTIFICATIONS_ENABLED:
+                        if app_state.NOTIFICATIONS_ENABLED:
                             notification = Notify()
                             notification.application_name = "SoundByte"
                             notification.title = "App Offline"
                             notification.message = "Your recording is saved for recognition when you go back online.\nWe'll notify you of the results"
                             notification.icon = get_logo()
                             notification.send(block=False)
-                            count += 1
-                        logger.info(f"App is now offline. Retrying connection in {backoff.current} seconds")
+                        logger.info("App is now offline")
                 elif not app_state.is_online:
                     # Still offline, continue with backoff
                     logger.info(f"App is offline. Retrying connection in {backoff.current} seconds")
-            
+                    backoff.wait()
+
             if shutdown_event.is_set():
                 continue
             elif paused_event.is_set():
