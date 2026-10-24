@@ -32,8 +32,14 @@ I got sick of the fact that Shazam isn't available on Windows, so I decided to b
    cd SoundByte
    ```
 2. Install dependencies:
-   - Using uv: `uv sync` (if you have uv installed)
-   - Using pip: `pip install -r requirements.txt`
+   - Using uv (Recommended): `uv sync`
+     This automatically creates a virtual environment in `.venv` and installs all dependencies.
+   - Using pip:
+     ```bash
+     python -m venv .venv
+     .venv\Scripts\activate
+     pip install -r requirements.txt
+     ```
 3. Create a `.env` file based on `.env.example` and fill in your AudD API token and preferred hotkey:
    ```dotenv
    AUDD_API_TOKEN=your_audd_api_token_here
@@ -43,9 +49,15 @@ I got sick of the fact that Shazam isn't available on Windows, so I decided to b
 ### Usage
 
 1. Run the application:
-   ```bash
-   python main.py
-   ```
+   - Using uv (Recommended):
+     ```bash
+     uv run python main.py
+     ```
+   - Using pip:
+     ```bash
+     .venv\Scripts\activate
+     python main.py
+     ```
 2. Use the configured hotkey (default: windows+shift+z) to start recording.
 3. Right-click the tray icon to access the menu:
    - Toggle online/offline status indicator
@@ -84,7 +96,7 @@ Changes made in the Settings UI are saved to the `.env` file and applied immedia
 The PyInstaller spec file is checked in, so the build is reproducible:
 
 ```bash
-pyinstaller SoundByte.spec
+python -m PyInstaller SoundByte.spec
 ```
 
 Note: Update `SoundByte.spec` if you need to add hidden imports for tkinter, dotenv, pystray, etc.
